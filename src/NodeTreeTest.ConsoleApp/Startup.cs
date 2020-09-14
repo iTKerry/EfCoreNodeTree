@@ -23,7 +23,7 @@ namespace NodeTreeTest.ConsoleApp
                 .AddLogging(builder => builder
                     .AddFilter("Microsoft", LogLevel.Warning)
                     .AddFilter("System", LogLevel.Warning)
-                    .AddFilter("Microsoft.EntityFrameworkCore.Database", LogLevel.Debug))
+                    .AddFilter("Microsoft.EntityFrameworkCore.Database", LogLevel.Trace))
                 .AddDbContext<AppDbContext>();
     }
 }

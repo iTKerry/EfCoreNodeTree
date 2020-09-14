@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -27,10 +28,67 @@ namespace NodeTreeTest.ConsoleApp
                 .FirstOrDefaultAsync(x =>
                     x.NodeType == TokenNodeType.Root &&
                     x.Application == FirstApp);
+            
+            var rootParams = new Dictionary<string, object>
+            {
+                {"@root", "root-value"}
+            };
+            
+            var documentTokens = RecAsync(root, rootParams);
 
-            PrintTree(root, "root");
+            await foreach (var res in documentTokens)
+            {
+                Console.WriteLine($"Token key: {res.Name} | TokenValue: {res.QueryResult}");
+            }
         }
 
+        private static IAsyncEnumerable<TokenResult> RecAsync(
+            Token token, 
+            Dictionary<string, object> parameters) =>
+            token.NodeType switch
+            {
+                TokenNodeType.Root => ExecuteParameterToken(token, parameters),
+                TokenNodeType.Parameter => ExecuteParameterToken(token, parameters),
+                TokenNodeType.Value => ExecuteValueToken(token, parameters),
+                _ => throw new InvalidOperationException()
+            };
+
+        private static async IAsyncEnumerable<TokenResult> ExecuteParameterToken(
+            Token token, 
+            Dictionary<string, object> parameters)
+        {
+            if (string.IsNullOrWhiteSpace(token.QueryParameter))
+                throw new ArgumentException(nameof(token.QueryParameter));
+
+            var queryResult = await SimulateSqlExecution(token.Query, parameters);
+            parameters.Add(token.QueryParameter, queryResult);
+            
+            foreach (var childNode in token.ChildrenTokens)
+            await foreach (var recResult in RecAsync(childNode.Child, parameters))
+                yield return recResult;
+        }
+        
+        private static async IAsyncEnumerable<TokenResult> ExecuteValueToken(
+            Token token, 
+            Dictionary<string, object> parameters)
+        {
+            var queryResult = await SimulateSqlExecution(token.Query, parameters);
+            yield return new TokenResult(token.Name.Value, token.DocumentType.ToString(), queryResult);
+        }
+
+        private static async Task<string> SimulateSqlExecution(
+            string query, 
+            Dictionary<string, object> parameters)
+        {
+            var paramString = string.Join(" ", parameters.Select(p => $"[param: {p.Key} | query: {p.Value as string}]"));
+            Console.WriteLine(paramString);
+            
+            var result = query;
+            
+            return await Task.FromResult(result);
+        }
+        
+        
         private static async Task<AppDbContext> GetDatabase()
         {
             var dbContext = new Startup(new ServiceCollection())
@@ -48,15 +106,15 @@ namespace NodeTreeTest.ConsoleApp
         
         private static Token InitialData()
         {
-            var a = Token.CreateRoot(Name.Create("aaa"), "a", "@a", FirstApp);
-            var b = Token.CreateParameter(Name.Create("bbb"), "b", "@b", FirstApp);
-            var d = Token.CreateParameter(Name.Create("ddd"), "d", "@d", FirstApp);
-            var e = Token.CreateParameter(Name.Create("eee"), "e", "@e", FirstApp);
+            var a = Token.CreateRoot(Name.Create("token_a"), "SELECT a", "@a", FirstApp);
+            var b = Token.CreateParameter(Name.Create("token_b"), "SELECT b", "@b", FirstApp);
+            var d = Token.CreateParameter(Name.Create("token_d"), "SELECT d", "@d", FirstApp);
+            var e = Token.CreateParameter(Name.Create("token_e"), "SELECT e", "@e", FirstApp);
 
-            var c = Token.CreateText(Name.Create("ccc"), "c", FirstApp);
-            var f = Token.CreateText(Name.Create("fff"), "f", FirstApp);
-            var g = Token.CreateText(Name.Create("ggg"), "g", FirstApp);
-            var h = Token.CreateText(Name.Create("hhh"), "h", FirstApp);
+            var c = Token.CreateText(Name.Create("token_c"), "SELECT c", FirstApp);
+            var f = Token.CreateText(Name.Create("token_f"), "SELECT f", FirstApp);
+            var g = Token.CreateText(Name.Create("token_g"), "SELECT g", FirstApp);
+            var h = Token.CreateText(Name.Create("token_h"), "SELECT h", FirstApp);
             
             a.AttachChild(b);
             b.AttachChildren(c, d, e);
@@ -65,55 +123,19 @@ namespace NodeTreeTest.ConsoleApp
 
             return a;
         }
+    }
 
-        private static void PrintTree(Token token, string parameters, int depth = 1)
+    internal class TokenResult
+    {
+        public TokenResult(string name, string type, string queryResult)
         {
-            switch (token.NodeType)
-            {
-                case TokenNodeType.Root:
-                case TokenNodeType.Parameter:
-                    ProcessParameter(token, parameters, depth);
-                    break;
-
-                case TokenNodeType.Value:
-                    ProcessValue(token, parameters, depth);
-                    break;
-                
-                default:
-                    throw new InvalidOperationException();
-            }
+            Name = name;
+            Type = type;
+            QueryResult = queryResult;
         }
 
-        private static void ProcessParameter(Token token, string parameters, int depth)
-        {
-            if (depth != 1 && token.NodeType == TokenNodeType.Root)
-                throw new InvalidOperationException($"This is second root in a tree: {token.Name}");
-
-            if (string.IsNullOrWhiteSpace(token.QueryParameter))
-                throw new InvalidOperationException(
-                    $"Root or Parameter node should contain parameter for: {token.Name.Value}");
-
-            var newParams = $"{parameters}/{token.QueryParameter}";
-            var result = $"params: {parameters} | name: {token.Name.Value} | query: {token.Query}";
-            var depthChars = Enumerable.Range(0, depth - 1).Select(i => '-').ToArray();
-            var path = token.ChildrenTokens.Any() ? depth != 1 ? "┐" : "-" : "-";
-            var depthString = new string(depthChars.Skip(0).ToArray());
-
-            Console.WriteLine($"└{depthString}{path} {result}");
-            
-            foreach (var childToken in token.ChildrenTokens)
-            {
-                PrintTree(childToken.Child, newParams, depth + 1);
-            }
-        }
-
-        private static void ProcessValue(Token token, string parameters, int depth)
-        {
-            var result = $"params: {parameters} | name: {token.Name.Value} | query: {token.Query}";
-            var depthChars = Enumerable.Range(0, depth - 1).Select(i => ' ').ToArray();
-            var depthString = new string(depthChars.Take(depthChars.Length - 1).Append('└').ToArray());
-            
-            Console.WriteLine($" {depthString} {result}");
-        }
+        public string Name { get; }
+        public string Type { get; }
+        public string QueryResult { get; }
     }
 }
